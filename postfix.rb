@@ -64,6 +64,8 @@ class Postfix < Formula
     
     IFS=$'\\n'
     
+    PostfixDir=#{prefix}
+    
     clean_up() {
       #{HOMEBREW_PREFIX}/sbin/postfix stop
       exit $1
@@ -77,22 +79,24 @@ class Postfix < Formula
       exit 1
     fi
     
-    lastPreparedVersion=$(defaults read "#{etc}/postfix/brew_install.plist" "prepared_version" >/dev/null 2>&1)
-    lastInstalledVersion=$(defaults read "#{etc}/postfix/brew_install.plist" "installed_version" >/dev/null 2>&1)
+    lastPreparedVersion=$(defaults read "#{etc}/postfix/brew_install.plist" "prepared_version" 2>/dev/null)
+    lastInstalledVersion=$(defaults read "#{etc}/postfix/brew_install.plist" "installed_version" 2>/dev/null)
     
-    if [ "$lastPreparedVersion" != "$lastInstalledVersion" ] ; then
-      chown root:admin #{lib}/postfix
+    if [ -z "$lastPreparedVersion" -o "$lastPreparedVersion" != "$lastInstalledVersion" ] ; then
+      chown root:admin ${PostfixDir}/lib/postfix/
       if [ -z "$lastPreparedVersion" ] ; then
         #{HOMEBREW_PREFIX}/sbin/postfix set-permissions
         #{HOMEBREW_PREFIX}/sbin/postfix post-install first-install
       else
         #{HOMEBREW_PREFIX}/sbin/postfix post-install upgrade-source
       fi
-      defaults write "#{etc}/postfix/brew_install.plist" "prepared_version" "$lastInstalledVersion"
+      defaults write "#{etc}/postfix/brew_install.plist" "installed_version" "#{version}.#{revision}"
+      defaults write "#{etc}/postfix/brew_install.plist" "prepared_version" "#{version}.#{revision}"
       chmod go+r "#{etc}/postfix/brew_install.plist"
     fi
     
     #{HOMEBREW_PREFIX}/sbin/postfix start
+    echo "^C to exit"
     while true; do
       sleep 86400
     done
