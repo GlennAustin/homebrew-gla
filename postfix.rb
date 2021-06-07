@@ -10,6 +10,7 @@ class Postfix < Formula
 
   depends_on "openssl@1.1"
   depends_on 'mariadb' => :optional
+  revision 1
 
   uses_from_macos "sqlite"
 
@@ -45,31 +46,89 @@ class Postfix < Formula
       "shlib_directory=#{prefix}/lib/postfix",
       *extraAuxLibs
     system "make"
-    toReplace = <<~TOREPLACE
-    # In case some systems special-case pathnames beginning with //.
-
+    toReplace1 = <<~TOREPLACE1
     case $install_root in
     /) install_root=
     esac
-
-    test -z "$need_install_root" || test -n "$install_root" || {
-        echo $0: Error: invalid package root directory: \"install_root=/\" 1>&2
-        exit 1
+    TOREPLACE1
+    inreplace "postfix-install" do |s|
+      s.gsub! toReplace1, ""
+    end
+    system "make",
+      "install_root=/",
+      "mail_owner=_postfix",
+      "setgid_group=_postdrop",
+      "upgrade"
+    controlFile = <<~END
+    #!/bin/sh
+    
+    IFS=$'\\n'
+    
+    clean_up() {
+      #{HOMEBREW_PREFIX}/sbin/postfix stop
+      exit $1
     }
-    TOREPLACE
-    inreplace "postfix-install", toReplace, "# Remove test for an invalid install_root"
-    system "make", "install_root=/", "upgrade"
+    
+    trap clean_up SIGHUP SIGINT SIGTERM
+    
+    /usr/local/sbin/postfix status >/dev/null 2>&1
+    if [ $? -eq 0 ] ; then
+      echo 'Postfix is already running' >&2
+      exit 1
+    fi
+    
+    lastPreparedVersion=$(defaults read "#{etc}/postfix/brew_install.plist" "prepared_version" >/dev/null 2>&1)
+    lastInstalledVersion=$(defaults read "#{etc}/postfix/brew_install.plist" "installed_version" >/dev/null 2>&1)
+    
+    if [ "$lastPreparedVersion" != "$lastInstalledVersion" ] ; then
+      chown root:admin #{lib}/postfix
+      if [ -z "$lastPreparedVersion" ] ; then
+        #{HOMEBREW_PREFIX}/sbin/postfix set-permissions
+        #{HOMEBREW_PREFIX}/sbin/postfix post-install first-install
+      else
+        #{HOMEBREW_PREFIX}/sbin/postfix post-install upgrade-source
+      fi
+      defaults write "#{etc}/postfix/brew_install.plist" "prepared_version" "$lastInstalledVersion"
+      chmod go+r "#{etc}/postfix/brew_install.plist"
+    fi
+    
+    #{HOMEBREW_PREFIX}/sbin/postfix start
+    while true; do
+      sleep 86400
+    done
+    clean_up
+    END
+    postfixCtl = (sbin/"postfix.macosx.sh")
+    postfixCtl.atomic_write(controlFile)
+    postfixCtl.chmod(0666)
+    system "defaults", "write", "#{etc}/postfix/brew_install.plist", "installed_version", "#{version}.#{revision}"
   end
   
-  plist_options manual: "#{HOMEBREW_PREFIX}/sbin/postfix start-fg"
+  def plist
+    <<~EOS
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0">
+        <dict>
+          <key>RunAtLoad</key>
+          <true/>
+          <key>Label</key>
+          <string>#{plist_name}</string>
+          <key>ProgramArguments</key>
+          <array>
+            <string>#{HOMEBREW_PREFIX}/sbin/postfix.macosx.sh</string>
+          </array>
+        </dict>
+      </plist>
+    EOS
+  end
   
   def caveats
     <<~EOS
-      Postfix needs to have specific permissions, but brew can't do that itself. Execute
+      Make sure to run our postfix execution script at least once before setting
+      up brew to load postfix at startup:
       
-        /usr/bin/sudo #{sbin}/postfix post-install {first-install|upgrade-source}
-      
-      to set the permissions correctly
+        /usr/bin/sudo #{HOMEBREW_PREFIX}/sbin/postfix.macosx.sh
     EOS
   end
 
