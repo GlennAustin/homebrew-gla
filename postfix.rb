@@ -104,6 +104,8 @@ class Postfix < Formula
     system "defaults", "write", "#{etc}/postfix/brew_install.plist", "installed_version", "#{version}.#{revision}"
   end
   
+  plist_options startup: true
+
   def plist
     <<~EOS
       <?xml version="1.0" encoding="UTF-8"?>
